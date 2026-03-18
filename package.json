@@ -1,0 +1,24 @@
+{
+  "name": "hkipo-engine",
+  "version": "0.1.0",
+  "description": "Agent-first structured data and alerts for Hong Kong IPO filings.",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:migrate": "wrangler d1 execute hkipo-db --file=src/db/schema.sql"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/strengthening/hkipo-engine.git"
+  },
+  "license": "ISC",
+  "dependencies": {
+    "hono": "^4.12.8",
+    "wrangler": "^4.75.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260317.1",
+    "typescript": "^5.9.3"
+  }
+}

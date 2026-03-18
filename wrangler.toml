@@ -1,0 +1,18 @@
+name = "hkipo-engine"
+main = "src/index.ts"
+compatibility_date = "2024-12-01"
+
+# D1 Database
+[[d1_databases]]
+binding = "DB"
+database_name = "hkipo-db"
+database_id = "33609e5d-f59e-457a-8417-4cea90eacbb8"
+
+# R2 Bucket (parsed markdown storage)
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "hkipo-docs"
+
+# Cron Triggers - check HKEXnews for new prospectuses
+[triggers]
+crons = ["*/30 9-18 * * 1-5"]  # Every 30 min, Mon-Fri 9am-6pm (HKT)
