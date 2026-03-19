@@ -13,9 +13,8 @@ export interface IPO {
   id: number;
   company_id: number;
   board: "Main" | "GEM";
-  status: "application" | "hearing" | "approved" | "listed" | "withdrawn";
+  status: "offering" | "listed" | "withdrawn";
   sponsor: string | null;
-  application_date: string | null;
   listing_date: string | null;
   created_at: string;
   updated_at: string;
@@ -24,22 +23,13 @@ export interface IPO {
 export interface Filing {
   id: number;
   ipo_id: number;
+  lang: "en" | "tc";
   category: string;
   title: string;
   source_url: string;
   markdown_key: string | null; // R2 object key for parsed markdown
   parsed_at: string | null;
   discovered_at: string;
-}
-
-export interface Event {
-  id: number;
-  ipo_id: number;
-  event_type: string;
-  description: string;
-  event_date: string;
-  source_filing_id: number | null;
-  created_at: string;
 }
 
 export interface Env {
