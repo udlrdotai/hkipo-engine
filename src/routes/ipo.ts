@@ -31,7 +31,7 @@ ipoRoutes.get("/", async (c) => {
   return c.json(result.results);
 });
 
-// Get single IPO with events
+// Get single IPO with filings
 ipoRoutes.get("/:id", async (c) => {
   const id = c.req.param("id");
 
@@ -44,13 +44,9 @@ ipoRoutes.get("/:id", async (c) => {
 
   if (!ipo) return c.json({ error: "IPO not found" }, 404);
 
-  const events = await c.env.DB.prepare(`
-    SELECT * FROM event WHERE ipo_id = ? ORDER BY event_date DESC
-  `).bind(id).all();
-
   const filings = await c.env.DB.prepare(`
     SELECT * FROM filing WHERE ipo_id = ? ORDER BY discovered_at DESC
   `).bind(id).all();
 
-  return c.json({ ...ipo, events: events.results, filings: filings.results });
+  return c.json({ ...ipo, filings: filings.results });
 });

@@ -9,6 +9,12 @@ const app = new Hono<{ Bindings: Env }>();
 // Health check
 app.get("/", (c) => c.json({ name: "hkipo-engine", status: "ok" }));
 
+// Manual discovery trigger
+app.post("/api/discover", async (c) => {
+  const result = await discover(c.env);
+  return c.json(result);
+});
+
 // API routes
 app.route("/api/ipo", ipoRoutes);
 app.route("/api/filing", filingRoutes);

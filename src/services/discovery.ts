@@ -13,46 +13,6 @@ const HKEX_NEW_LISTINGS_GEM_TC =
   "https://www2.hkexnews.hk/New-Listings/New-Listing-Information/GEM?sc_lang=zh-HK";
 
 // ---------------------------------------------------------------------------
-// Title Search API (www1) – structured search endpoint
-// ---------------------------------------------------------------------------
-const TITLE_SEARCH_URL =
-  "https://www1.hkexnews.hk/search/titlesearch.xhtml";
-
-/**
- * Tier-1 and Tier-2 headline category codes used by the Title Search API.
- *
- * Reference: /ncms/script/eds/tierone_e.json, tiertwo_e.json
- *
- * Key IPO-related categories:
- *   t1=30000 "Listing Documents"
- *     t2=30600 "Offer for Sale"
- *     t2=30700 "Offer for Subscription"
- *     t2=31000 "Placing of Securities of a Class New to Listing"
- *     t2=30500 "Introduction"
- *   t1=10000 "Announcements and Notices"
- *     t2=15100 "Allotment Results"        (t2Gcode=5)
- *     t2=15200 "Formal Notice"            (t2Gcode=5)
- *     t2=15500 "Supplemental Info re IPO" (t2Gcode=5)
- *   t1=91000 "Application Proofs, OC Announcements and PHIPs"
- *     t2=91100 "Post Hearing Information Packs or PHIPs"
- *     t2=91200 "Application Proofs"
- */
-interface TitleSearchQuery {
-  /** "SEHK" (Main Board) or "GEM" */
-  market: "SEHK" | "GEM";
-  /** First-tier headline category code */
-  t1code: number;
-  /** Second-tier group code.  -2 = specific t2code selected; -1 = all */
-  t2Gcode: number;
-  /** Second-tier headline category code.  -1 = all under the t1 */
-  t2code: number;
-  /** Date range start YYYYMMDD */
-  from: number;
-  /** Date range end   YYYYMMDD */
-  to: number;
-}
-
-// ---------------------------------------------------------------------------
 // Public entry point – called by Cron Trigger
 // ---------------------------------------------------------------------------
 
@@ -60,17 +20,11 @@ interface TitleSearchQuery {
  * Discover new IPO prospectuses from HKEXnews.
  * Called by Cron Trigger on schedule.
  *
- * Strategy: use two complementary data sources
- * 1. **New Listings HTML pages** – gives company full names (EN + TC),
- *    stock codes, and links to announcements/prospectuses/allotment results
- *    in a compact table.
- * 2. **Title Search API** – gives structured per-document results with
- *    release timestamps, stock short names, document titles, headline
- *    categories, and PDF links.  Covers broader filing types.
- *
- * Both are merged and de-duplicated by source_url before persisting.
+ * Fetches the New Listings HTML pages (Main Board + GEM, EN + TC),
+ * extracts prospectus PDF links, merges company names by stock code,
+ * and persists new filings to D1.
  */
-export async function discover(env: Env): Promise<void> {
+export async function discover(env: Env): Promise<DiscoverResult> {
   // ---- Source 1: New Listings HTML pages ----
   const [mainEn, mainTc, gemEn, gemTc] = await Promise.all([
     fetchHtml(HKEX_NEW_LISTINGS_MAIN_EN),
@@ -90,45 +44,40 @@ export async function discover(env: Env): Promise<void> {
     [...mainListingsTc, ...gemListingsTc],
   );
 
-  // Flatten HTML-sourced filings
-  const htmlFilings = mergeNewListingsToFilings(
-    [...mainListingsEn, ...gemListingsEn],
-    companyNames,
+  // Flatten HTML-sourced filings (both EN and TC pages have different PDF links)
+  const enFilings = mergeNewListingsToFilings(
+    [...mainListingsEn, ...gemListingsEn], companyNames, "en",
   );
+  const tcFilings = mergeNewListingsToFilings(
+    [...mainListingsTc, ...gemListingsTc], companyNames, "tc",
+  );
+  const filings = [...enFilings, ...tcFilings];
 
-  // ---- Source 2: Title Search API ----
-  const titleSearchFilings = await discoverViaTitleSearch();
-
-  // ---- Merge & de-duplicate by source_url ----
+  // De-duplicate by source_url
   const seenUrls = new Set<string>();
-  const allResults: DiscoveredFiling[] = [];
-
-  // Title search results are richer (have release time, doc title) so add first
-  for (const f of titleSearchFilings) {
+  const uniqueFilings: DiscoveredFiling[] = [];
+  for (const f of filings) {
     const normUrl = normaliseUrl(f.sourceUrl);
     if (!seenUrls.has(normUrl)) {
       seenUrls.add(normUrl);
-      // Enrich with full company names from the HTML pages where possible
-      const names = companyNames.get(f.stockCode);
-      if (names) {
-        if (!f.companyNameEn && names.en) f.companyNameEn = names.en;
-        if (!f.companyNameTc && names.tc) f.companyNameTc = names.tc;
-      }
-      allResults.push(f);
-    }
-  }
-  for (const f of htmlFilings) {
-    const normUrl = normaliseUrl(f.sourceUrl);
-    if (!seenUrls.has(normUrl)) {
-      seenUrls.add(normUrl);
-      allResults.push(f);
+      uniqueFilings.push(f);
     }
   }
 
   // ---- Persist ----
-  for (const item of allResults) {
+  for (const item of uniqueFilings) {
     await persistFiling(env, item);
   }
+
+  return {
+    parsed: {
+      mainEn: mainListingsEn.length,
+      mainTc: mainListingsTc.length,
+      gemEn: gemListingsEn.length,
+      gemTc: gemListingsTc.length,
+    },
+    newFilings: uniqueFilings.length,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -164,8 +113,16 @@ async function persistFiling(env: Env, item: DiscoveredFiling): Promise<void> {
       .first<{ id: number }>();
   }
 
+  if (!company && item.companyNameTc) {
+    company = await env.DB.prepare(
+      "SELECT id FROM company WHERE name_tc = ?",
+    )
+      .bind(item.companyNameTc)
+      .first<{ id: number }>();
+  }
+
   if (!company) {
-    const nameEn = item.companyNameEn || item.stockShortNameEn || item.stockCode || "Unknown";
+    const nameEn = item.companyNameEn || item.stockCode || "Unknown";
     const res = await env.DB.prepare(
       "INSERT INTO company (name_en, name_tc, stock_code) VALUES (?, ?, ?) RETURNING id",
     )
@@ -173,7 +130,14 @@ async function persistFiling(env: Env, item: DiscoveredFiling): Promise<void> {
       .first<{ id: number }>();
     company = res!;
   } else {
-    // Back-fill TC name / stock_code if we now have them
+    // Back-fill EN name / TC name / stock_code if we now have them
+    if (item.companyNameEn) {
+      await env.DB.prepare(
+        "UPDATE company SET name_en = ? WHERE id = ? AND (name_en IS NULL OR name_en = '' OR name_en = 'Unknown')",
+      )
+        .bind(item.companyNameEn, company.id)
+        .run();
+    }
     if (item.companyNameTc) {
       await env.DB.prepare(
         "UPDATE company SET name_tc = ? WHERE id = ? AND (name_tc IS NULL OR name_tc = '')",
@@ -208,9 +172,9 @@ async function persistFiling(env: Env, item: DiscoveredFiling): Promise<void> {
 
   // Insert filing
   await env.DB.prepare(
-    "INSERT INTO filing (ipo_id, category, title, source_url) VALUES (?, ?, ?, ?)",
+    "INSERT INTO filing (ipo_id, lang, category, title, source_url) VALUES (?, ?, ?, ?, ?)",
   )
-    .bind(ipo.id, item.category, item.title, item.sourceUrl)
+    .bind(ipo.id, item.lang, item.category, item.title, item.sourceUrl)
     .run();
 
   console.log(
@@ -222,16 +186,20 @@ async function persistFiling(env: Env, item: DiscoveredFiling): Promise<void> {
 // Data types
 // ---------------------------------------------------------------------------
 
+export interface DiscoverResult {
+  parsed: { mainEn: number; mainTc: number; gemEn: number; gemTc: number };
+  newFilings: number;
+}
+
 interface DiscoveredFiling {
   companyNameEn: string;
   companyNameTc: string;
   stockCode: string;
-  stockShortNameEn: string;
   board: "Main" | "GEM";
+  lang: "en" | "tc";
   category: string;
   title: string;
   sourceUrl: string;
-  releaseTime: string;
 }
 
 /** One row from the "New Listings" HTML table (per stock) */
@@ -239,9 +207,7 @@ interface NewListingEntry {
   stockCode: string;
   companyName: string;
   board: "Main" | "GEM";
-  announcementUrls: string[];
   prospectusUrls: string[];
-  allotmentUrls: string[];
 }
 
 interface CompanyNamePair {
@@ -295,7 +261,7 @@ function parseNewListingsHtml(
   if (!tbodyMatch) return results;
 
   // Split into rows: each <tr>...</tr>
-  const rowRegex = /<tr[\s>]([\s\S]*?)<\/tr>/gi;
+  const rowRegex = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
   let rowMatch: RegExpExecArray | null;
 
   while ((rowMatch = rowRegex.exec(tbodyMatch)) !== null) {
@@ -313,18 +279,14 @@ function parseNewListingsHtml(
     const companyName = extractTextContent(cells[1]).trim();
     if (!companyName) continue;
 
-    // Cells 2-4: PDF links for announcements, prospectuses, allotment results
-    const announcementUrls = extractPdfUrls(cells[2]);
+    // Cell 3: PDF links for prospectuses
     const prospectusUrls = extractPdfUrls(cells[3]);
-    const allotmentUrls = extractPdfUrls(cells[4]);
 
     results.push({
       stockCode,
       companyName,
       board,
-      announcementUrls,
       prospectusUrls,
-      allotmentUrls,
     });
   }
 
@@ -352,7 +314,7 @@ function findMainListingsTable(html: string): string | null {
       /股份代号/i.test(tableHtml)
     ) {
       // Extract tbody
-      const tbodyRegex = /<tbody[\s>][\s\S]*?<\/tbody>/i;
+      const tbodyRegex = /<tbody[^>]*>[\s\S]*?<\/tbody>/i;
       const tbodyMatch = tbodyRegex.exec(tableHtml);
       if (tbodyMatch) return tbodyMatch[0];
       // No explicit tbody – use the whole table
@@ -369,7 +331,7 @@ function findMainListingsTable(html: string): string | null {
 /** Extract all <td>...</td> cell contents from a row HTML string. */
 function extractCells(rowHtml: string): string[] {
   const cells: string[] = [];
-  const cellRegex = /<td[\s>]([\s\S]*?)<\/td>/gi;
+  const cellRegex = /<td[^>]*>([\s\S]*?)<\/td>/gi;
   let m: RegExpExecArray | null;
   while ((m = cellRegex.exec(rowHtml)) !== null) {
     cells.push(m[1]);
@@ -451,6 +413,7 @@ function buildCompanyNameMap(
 function mergeNewListingsToFilings(
   entries: NewListingEntry[],
   names: Map<string, CompanyNamePair>,
+  lang: "en" | "tc",
 ): DiscoveredFiling[] {
   const filings: DiscoveredFiling[] = [];
 
@@ -465,22 +428,15 @@ function mergeNewListingsToFilings(
       companyNameEn: pair.en,
       companyNameTc: pair.tc,
       stockCode: entry.stockCode,
-      stockShortNameEn: "",
       board: entry.board,
+      lang,
       category,
       title,
       sourceUrl: url,
-      releaseTime: "",
     });
 
-    for (const url of entry.announcementUrls) {
-      filings.push(makeFiling(url, "New Listing Announcement", "New Listing Announcement"));
-    }
     for (const url of entry.prospectusUrls) {
       filings.push(makeFiling(url, "Listing Document", "Prospectus"));
-    }
-    for (const url of entry.allotmentUrls) {
-      filings.push(makeFiling(url, "Allotment Results", "Allotment Results"));
     }
   }
 
@@ -488,279 +444,8 @@ function mergeNewListingsToFilings(
 }
 
 // ---------------------------------------------------------------------------
-// Source 2: Title Search API
-// ---------------------------------------------------------------------------
-
-/**
- * Discover filings via the HKEXnews Title Search API.
- *
- * POST https://www1.hkexnews.hk/search/titlesearch.xhtml
- *
- * The API returns server-rendered HTML (not JSON).  Each result row contains:
- *   - Release time        (td.release-time)
- *   - Stock code          (td.stock-short-code)
- *   - Stock short name    (td.stock-short-name)
- *   - Document details    (div.headline + div.doc-link with <a> to PDF)
- *
- * We query multiple IPO-relevant category combinations and merge results.
- */
-async function discoverViaTitleSearch(): Promise<DiscoveredFiling[]> {
-  const { from, to } = getSearchDateRange();
-
-  // Define the category queries we care about
-  const queries: Array<TitleSearchQuery & { board: "Main" | "GEM" }> = [];
-
-  for (const market of ["SEHK", "GEM"] as const) {
-    const board: "Main" | "GEM" = market === "SEHK" ? "Main" : "GEM";
-
-    // Listing Documents – Offer for Subscription (IPO prospectuses)
-    queries.push({ market, t1code: 30000, t2Gcode: -2, t2code: 30700, from, to, board });
-    // Listing Documents – Offer for Sale
-    queries.push({ market, t1code: 30000, t2Gcode: -2, t2code: 30600, from, to, board });
-    // Listing Documents – Introduction
-    queries.push({ market, t1code: 30000, t2Gcode: -2, t2code: 30500, from, to, board });
-    // Listing Documents – Placing of Securities of a Class New to Listing
-    queries.push({ market, t1code: 30000, t2Gcode: -2, t2code: 31000, from, to, board });
-    // Announcements – Allotment Results
-    queries.push({ market, t1code: 10000, t2Gcode: -2, t2code: 15100, from, to, board });
-    // Announcements – Formal Notice
-    queries.push({ market, t1code: 10000, t2Gcode: -2, t2code: 15200, from, to, board });
-    // Application Proofs / PHIPs (pre-IPO filings)
-    queries.push({ market, t1code: 91000, t2Gcode: -1, t2code: -1, from, to, board });
-  }
-
-  // Execute all queries in parallel
-  const batchResults = await Promise.all(
-    queries.map(async (q) => {
-      try {
-        const html = await postTitleSearch(q);
-        return parseTitleSearchHtml(html, q.board);
-      } catch (err) {
-        console.error(
-          `[discovery] Title search error (t1=${q.t1code}, t2=${q.t2code}, market=${q.market}):`,
-          err,
-        );
-        return [] as DiscoveredFiling[];
-      }
-    }),
-  );
-
-  // Flatten and de-dup by sourceUrl
-  const seen = new Set<string>();
-  const results: DiscoveredFiling[] = [];
-  for (const batch of batchResults) {
-    for (const f of batch) {
-      const normUrl = normaliseUrl(f.sourceUrl);
-      if (!seen.has(normUrl)) {
-        seen.add(normUrl);
-        results.push(f);
-      }
-    }
-  }
-
-  return results;
-}
-
-/**
- * POST to the Title Search API and return the HTML response body.
- */
-async function postTitleSearch(q: TitleSearchQuery): Promise<string> {
-  const body = new URLSearchParams({
-    lang: "EN",
-    market: q.market,
-    searchType: "1",
-    t1code: String(q.t1code),
-    t2Gcode: String(q.t2Gcode),
-    t2code: String(q.t2code),
-    stockId: "-1",
-    from: String(q.from),
-    to: String(q.to),
-    category: "0",
-  });
-
-  const resp = await fetch(TITLE_SEARCH_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-      "User-Agent": "hkipo-engine/0.1",
-    },
-    body: body.toString(),
-  });
-
-  if (!resp.ok) {
-    throw new Error(`Title search HTTP ${resp.status}`);
-  }
-
-  return resp.text();
-}
-
-/**
- * Parse the Title Search API HTML response into DiscoveredFiling[].
- *
- * Each result row has this structure:
- * ```html
- * <tr>
- *   <td class="... release-time">
- *     <span class="mobile-list-heading">Release Time: </span>16/03/2026 06:16
- *   </td>
- *   <td class="... stock-short-code">
- *     <span class="mobile-list-heading">Stock Code: </span>02729
- *   </td>
- *   <td class="stock-short-name">
- *     <span class="mobile-list-heading">Stock Short Name: </span>GALAXIS TECH
- *   </td>
- *   <td>
- *     <div class="headline">Listing Documents - [Offer for Subscription]</div>
- *     <div class="doc-link">
- *       <a href="/listedco/listconews/sehk/2026/0316/2026031600013.pdf" ...>
- *         GLOBAL OFFERING
- *       </a>
- *       (<span class="attachment_filesize">9MB</span>)
- *     </div>
- *   </td>
- * </tr>
- * ```
- */
-function parseTitleSearchHtml(
-  html: string,
-  board: "Main" | "GEM",
-): DiscoveredFiling[] {
-  if (!html) return [];
-
-  const results: DiscoveredFiling[] = [];
-
-  // Extract <tbody>...</tbody>
-  const tbodyRegex = /<tbody[\s>]([\s\S]*?)<\/tbody>/i;
-  const tbodyMatch = tbodyRegex.exec(html);
-  if (!tbodyMatch) return results;
-
-  const tbody = tbodyMatch[1];
-
-  // Split into <tr>...</tr> rows
-  const rowRegex = /<tr[\s>]([\s\S]*?)<\/tr>/gi;
-  let rowMatch: RegExpExecArray | null;
-
-  while ((rowMatch = rowRegex.exec(tbody)) !== null) {
-    const row = rowMatch[1];
-
-    // Release time: text after the mobile-list-heading span in td.release-time
-    const releaseTime = extractFieldAfterHeading(row, "release-time") || "";
-
-    // Stock code: text in td.stock-short-code
-    const rawStockCode = extractFieldAfterHeading(row, "stock-short-code") || "";
-    const stockCode = rawStockCode.replace(/^0+/, "") || rawStockCode; // strip leading zeros: "02729" -> "2729"
-
-    // Stock short name: text in td.stock-short-name
-    const stockShortName = extractFieldAfterHeading(row, "stock-short-name") || "";
-
-    // Headline category: text inside div.headline
-    const headlineMatch = /<div\s+class="headline">([\s\S]*?)<\/div>/i.exec(row);
-    const headline = headlineMatch
-      ? extractTextContent(headlineMatch[1]).trim()
-      : "";
-
-    // Map headline to a category string
-    const category = mapHeadlineToCategory(headline);
-
-    // Document links: <div class="doc-link"><a href="...">title</a>...</div>
-    // There may be multiple doc-link divs per row
-    const docLinkRegex =
-      /<div\s+class="doc-link">\s*<a\s+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
-    let docMatch: RegExpExecArray | null;
-
-    while ((docMatch = docLinkRegex.exec(row)) !== null) {
-      let url = docMatch[1].trim();
-      if (url.startsWith("/")) {
-        url = "https://www1.hkexnews.hk" + url;
-      }
-      const docTitle = extractTextContent(docMatch[2]).trim() || headline;
-
-      results.push({
-        companyNameEn: "",
-        companyNameTc: "",
-        stockCode,
-        stockShortNameEn: stockShortName,
-        board,
-        category,
-        title: docTitle,
-        sourceUrl: url,
-        releaseTime,
-      });
-    }
-  }
-
-  return results;
-}
-
-/**
- * Extract the text content that follows a `<span class="mobile-list-heading">`
- * inside a `<td>` whose class list contains the given className.
- *
- * Example: for className="stock-short-code" in
- *   `<td class="text-right text-end stock-short-code"><span ...>Stock Code: </span>02729</td>`
- * returns "02729".
- */
-function extractFieldAfterHeading(
-  rowHtml: string,
-  className: string,
-): string | null {
-  // Build a regex that finds a <td> with the given class, then captures
-  // the text after the closing </span> of the mobile-list-heading.
-  const pattern = new RegExp(
-    `<td[^>]*\\b${className}\\b[^>]*>[\\s\\S]*?<\\/span>([\\s\\S]*?)<\\/td>`,
-    "i",
-  );
-  const m = pattern.exec(rowHtml);
-  if (!m) return null;
-  return extractTextContent(m[1]).trim();
-}
-
-/** Map a headline string from the Title Search to a filing category. */
-function mapHeadlineToCategory(headline: string): string {
-  const h = headline.toLowerCase();
-  if (h.includes("listing documents")) {
-    if (h.includes("offer for subscription")) return "Listing Document - Offer for Subscription";
-    if (h.includes("offer for sale")) return "Listing Document - Offer for Sale";
-    if (h.includes("introduction")) return "Listing Document - Introduction";
-    if (h.includes("placing")) return "Listing Document - Placing";
-    return "Listing Document";
-  }
-  if (h.includes("allotment results")) return "Allotment Results";
-  if (h.includes("formal notice")) return "Formal Notice";
-  if (h.includes("application proofs")) return "Application Proof";
-  if (h.includes("post hearing") || h.includes("phip")) return "PHIP";
-  if (h.includes("oc announcement")) return "OC Announcement";
-  if (h.includes("supplemental") && h.includes("ipo")) return "Supplemental IPO Info";
-  // Fallback: use the headline as-is
-  return headline || "Other";
-}
-
-// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-/**
- * Compute a search date range for the Title Search API.
- * With a headline category selected (but no stock code), max range is 12 months.
- * We use a rolling 1-month window ending today to stay conservative.
- */
-function getSearchDateRange(): { from: number; to: number } {
-  const now = new Date();
-  const to =
-    now.getFullYear() * 10000 +
-    (now.getMonth() + 1) * 100 +
-    now.getDate();
-
-  // 1 month back
-  const oneMonthAgo = new Date(now);
-  oneMonthAgo.setMonth(oneMonthAgo.getMonth() - 1);
-  const from =
-    oneMonthAgo.getFullYear() * 10000 +
-    (oneMonthAgo.getMonth() + 1) * 100 +
-    oneMonthAgo.getDate();
-
-  return { from, to };
-}
 
 /**
  * Normalise a URL for de-duplication.
