@@ -12,7 +12,7 @@ export interface Company {
 export interface IPO {
   id: number;
   company_id: number;
-  board: "Main" | "GEM";
+  board: "Main";
   status: "offering" | "listed" | "withdrawn";
   sponsor: string | null;
   listing_date: string | null;
@@ -35,8 +35,5 @@ export interface Filing {
 export interface Env {
   DB: D1Database;
   BUCKET: R2Bucket;
-  /** Aliyun AccessKey ID for Document AI API authentication. */
-  ALIYUN_ACCESS_KEY_ID?: string;
-  /** Aliyun AccessKey Secret for Document AI API authentication. */
-  ALIYUN_ACCESS_KEY_SECRET?: string;
+  ADMIN_API_KEY: string;
 }

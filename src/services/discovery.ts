@@ -7,10 +7,6 @@ const HKEX_NEW_LISTINGS_MAIN_EN =
   "https://www2.hkexnews.hk/New-Listings/New-Listing-Information/Main-Board?sc_lang=en";
 const HKEX_NEW_LISTINGS_MAIN_TC =
   "https://www2.hkexnews.hk/New-Listings/New-Listing-Information/Main-Board?sc_lang=zh-HK";
-const HKEX_NEW_LISTINGS_GEM_EN =
-  "https://www2.hkexnews.hk/New-Listings/New-Listing-Information/GEM?sc_lang=en";
-const HKEX_NEW_LISTINGS_GEM_TC =
-  "https://www2.hkexnews.hk/New-Listings/New-Listing-Information/GEM?sc_lang=zh-HK";
 
 // ---------------------------------------------------------------------------
 // Public entry point – called by Cron Trigger
@@ -20,37 +16,26 @@ const HKEX_NEW_LISTINGS_GEM_TC =
  * Discover new IPO prospectuses from HKEXnews.
  * Called by Cron Trigger on schedule.
  *
- * Fetches the New Listings HTML pages (Main Board + GEM, EN + TC),
+ * Fetches the New Listings HTML pages (Main Board, EN + TC),
  * extracts prospectus PDF links, merges company names by stock code,
  * and persists new filings to D1.
  */
 export async function discover(env: Env): Promise<DiscoverResult> {
   // ---- Source 1: New Listings HTML pages ----
-  const [mainEn, mainTc, gemEn, gemTc] = await Promise.all([
+  const [mainEn, mainTc] = await Promise.all([
     fetchHtml(HKEX_NEW_LISTINGS_MAIN_EN),
     fetchHtml(HKEX_NEW_LISTINGS_MAIN_TC),
-    fetchHtml(HKEX_NEW_LISTINGS_GEM_EN),
-    fetchHtml(HKEX_NEW_LISTINGS_GEM_TC),
   ]);
 
   const mainListingsEn = parseNewListingsHtml(mainEn, "Main");
   const mainListingsTc = parseNewListingsHtml(mainTc, "Main");
-  const gemListingsEn = parseNewListingsHtml(gemEn, "GEM");
-  const gemListingsTc = parseNewListingsHtml(gemTc, "GEM");
 
   // Merge English and TC names by stock code
-  const companyNames = buildCompanyNameMap(
-    [...mainListingsEn, ...gemListingsEn],
-    [...mainListingsTc, ...gemListingsTc],
-  );
+  const companyNames = buildCompanyNameMap(mainListingsEn, mainListingsTc);
 
   // Flatten HTML-sourced filings (both EN and TC pages have different PDF links)
-  const enFilings = mergeNewListingsToFilings(
-    [...mainListingsEn, ...gemListingsEn], companyNames, "en",
-  );
-  const tcFilings = mergeNewListingsToFilings(
-    [...mainListingsTc, ...gemListingsTc], companyNames, "tc",
-  );
+  const enFilings = mergeNewListingsToFilings(mainListingsEn, companyNames, "en");
+  const tcFilings = mergeNewListingsToFilings(mainListingsTc, companyNames, "tc");
   const filings = [...enFilings, ...tcFilings];
 
   // De-duplicate by source_url
@@ -73,8 +58,6 @@ export async function discover(env: Env): Promise<DiscoverResult> {
     parsed: {
       mainEn: mainListingsEn.length,
       mainTc: mainListingsTc.length,
-      gemEn: gemListingsEn.length,
-      gemTc: gemListingsTc.length,
     },
     newFilings: uniqueFilings.length,
   };
@@ -187,7 +170,7 @@ async function persistFiling(env: Env, item: DiscoveredFiling): Promise<void> {
 // ---------------------------------------------------------------------------
 
 export interface DiscoverResult {
-  parsed: { mainEn: number; mainTc: number; gemEn: number; gemTc: number };
+  parsed: { mainEn: number; mainTc: number };
   newFilings: number;
 }
 
@@ -195,7 +178,7 @@ interface DiscoveredFiling {
   companyNameEn: string;
   companyNameTc: string;
   stockCode: string;
-  board: "Main" | "GEM";
+  board: "Main";
   lang: "en" | "tc";
   category: string;
   title: string;
@@ -206,7 +189,7 @@ interface DiscoveredFiling {
 interface NewListingEntry {
   stockCode: string;
   companyName: string;
-  board: "Main" | "GEM";
+  board: "Main";
   prospectusUrls: string[];
 }
 
@@ -249,7 +232,7 @@ async function fetchHtml(url: string): Promise<string> {
  */
 function parseNewListingsHtml(
   html: string,
-  board: "Main" | "GEM",
+  board: "Main",
 ): NewListingEntry[] {
   if (!html) return [];
 
