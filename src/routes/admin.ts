@@ -16,6 +16,14 @@ adminRoutes.use("/*", async (c, next) => {
   await next();
 });
 
+// POST /admin/api/discover
+// Manual trigger for HKEXnews scraping
+adminRoutes.post("/discover", async (c) => {
+  const { discover } = await import("../services/discovery");
+  const result = await discover(c.env);
+  return c.json(result);
+});
+
 // GET /admin/api/prospectus/pending
 // Returns prospectuses in pending status with PDF download URLs from filing table
 adminRoutes.get("/prospectus/pending", async (c) => {
@@ -26,37 +34,18 @@ adminRoutes.get("/prospectus/pending", async (c) => {
       p.company_name_tc,
       p.status,
       p.created_at,
-      f.source_url AS pdf_url,
-      f.lang
+      f.source_url AS pdf_url
     FROM prospectus p
     LEFT JOIN company co ON co.stock_code = p.stock_code
     LEFT JOIN ipo i ON i.company_id = co.id
     LEFT JOIN filing f ON f.ipo_id = i.id
       AND f.category = 'Listing Document'
+      AND f.lang = 'tc'
     WHERE p.status = 'pending'
     ORDER BY p.created_at ASC
   `).all();
 
-  // Group PDF URLs by stock_code
-  const map = new Map<string, Record<string, unknown>>();
-  for (const row of rows.results) {
-    const code = row.stock_code as string;
-    if (!map.has(code)) {
-      map.set(code, {
-        stock_code: row.stock_code,
-        company_name_en: row.company_name_en,
-        company_name_tc: row.company_name_tc,
-        status: row.status,
-        created_at: row.created_at,
-        pdf_urls: [],
-      });
-    }
-    if (row.pdf_url) {
-      (map.get(code)!.pdf_urls as string[]).push(row.pdf_url as string);
-    }
-  }
-
-  return c.json(Array.from(map.values()));
+  return c.json(rows.results);
 });
 
 // POST /admin/api/prospectus

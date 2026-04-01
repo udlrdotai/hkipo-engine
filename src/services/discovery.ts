@@ -160,6 +160,17 @@ async function persistFiling(env: Env, item: DiscoveredFiling): Promise<void> {
     .bind(ipo.id, item.lang, item.category, item.title, item.sourceUrl)
     .run();
 
+  // Ensure prospectus record exists (pending status for VPS to pick up)
+  if (item.stockCode) {
+    await env.DB.prepare(
+      `INSERT INTO prospectus (stock_code, company_name_en, company_name_tc, board)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(stock_code) DO NOTHING`,
+    )
+      .bind(item.stockCode, item.companyNameEn || null, item.companyNameTc || null, item.board)
+      .run();
+  }
+
   console.log(
     `[discovery] New filing: ${item.companyNameEn || item.stockCode} – ${item.title}`,
   );
