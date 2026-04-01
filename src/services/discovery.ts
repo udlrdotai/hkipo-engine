@@ -161,13 +161,14 @@ async function persistFiling(env: Env, item: DiscoveredFiling): Promise<void> {
     .run();
 
   // Ensure prospectus record exists (pending status for VPS to pick up)
-  if (item.stockCode) {
+  if (item.stockCode && item.category === "Listing Document") {
+    const companyName = item.lang === "tc" ? item.companyNameTc : item.companyNameEn;
     await env.DB.prepare(
-      `INSERT INTO prospectus (stock_code, company_name_en, company_name_tc, board)
-       VALUES (?, ?, ?, ?)
-       ON CONFLICT(stock_code) DO NOTHING`,
+      `INSERT INTO prospectus (stock_code, lang, source_url, company_name, board)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(stock_code, lang) DO NOTHING`,
     )
-      .bind(item.stockCode, item.companyNameEn || null, item.companyNameTc || null, item.board)
+      .bind(item.stockCode, item.lang, item.sourceUrl, companyName || null, item.board)
       .run();
   }
 

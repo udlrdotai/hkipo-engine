@@ -25,26 +25,26 @@ adminRoutes.post("/discover", async (c) => {
 });
 
 // GET /admin/api/prospectus/pending
-// Returns prospectuses in pending status with PDF download URLs from filing table
+// Returns prospectuses in pending status, supports ?lang= filter
 adminRoutes.get("/prospectus/pending", async (c) => {
-  const rows = await c.env.DB.prepare(`
-    SELECT
-      p.stock_code,
-      p.company_name_en,
-      p.company_name_tc,
-      p.status,
-      p.created_at,
-      f.source_url AS pdf_url
-    FROM prospectus p
-    LEFT JOIN company co ON co.stock_code = p.stock_code
-    LEFT JOIN ipo i ON i.company_id = co.id
-    LEFT JOIN filing f ON f.ipo_id = i.id
-      AND f.category = 'Listing Document'
-      AND f.lang = 'tc'
-    WHERE p.status = 'pending'
-    ORDER BY p.created_at ASC
-  `).all();
+  const lang = c.req.query("lang");
 
+  let query = `
+    SELECT stock_code, lang, source_url, company_name,
+           status, created_at
+    FROM prospectus
+    WHERE status = 'pending'
+  `;
+  const params: string[] = [];
+
+  if (lang) {
+    query += " AND lang = ?";
+    params.push(lang);
+  }
+
+  query += " ORDER BY created_at ASC";
+
+  const rows = await c.env.DB.prepare(query).bind(...params).all();
   return c.json(rows.results);
 });
 
@@ -52,44 +52,51 @@ adminRoutes.get("/prospectus/pending", async (c) => {
 // Submit parsed prospectus data
 adminRoutes.post("/prospectus", async (c) => {
   const body = await c.req.json();
-  const { stock_code } = body;
+  const { stock_code, lang } = body;
 
   if (!stock_code) {
     return c.json({ error: "stock_code is required" }, 400);
+  }
+  if (!lang || !["en", "tc"].includes(lang)) {
+    return c.json({ error: "lang must be 'en' or 'tc'" }, 400);
   }
 
   const now = new Date().toISOString();
 
   await c.env.DB.prepare(`
     INSERT INTO prospectus (
-      stock_code, company_name_tc, company_name_en, industry, board,
+      stock_code, lang, source_url, company_name,
+      industry, board,
       listing_date, offer_start, offer_end, price_low, price_high,
       currency, net_proceeds, business_summary, dividend_policy,
       offering, timeline, sponsors, financials,
       use_of_proceeds, cornerstone_investors, shareholders,
       risk_factors, financial_risks,
-      status, source_pdf_key, created_at, updated_at
+      status, created_at, updated_at
     ) VALUES (
-      ?1, ?2, ?3, ?4, ?5,
-      ?6, ?7, ?8, ?9, ?10,
-      ?11, ?12, ?13, ?14,
-      ?15, ?16, ?17, ?18,
-      ?19, ?20, ?21,
-      ?22, ?23,
-      'parsed', ?24, ?25, ?25
+      ?1, ?2, ?3, ?4,
+      ?5, ?6,
+      ?7, ?8, ?9, ?10, ?11,
+      ?12, ?13, ?14, ?15,
+      ?16, ?17, ?18, ?19,
+      ?20, ?21, ?22,
+      ?23, ?24,
+      'parsed', ?25, ?25
     )
-    ON CONFLICT(stock_code) DO UPDATE SET
-      company_name_tc = ?2, company_name_en = ?3, industry = ?4, board = ?5,
-      listing_date = ?6, offer_start = ?7, offer_end = ?8, price_low = ?9, price_high = ?10,
-      currency = ?11, net_proceeds = ?12, business_summary = ?13, dividend_policy = ?14,
-      offering = ?15, timeline = ?16, sponsors = ?17, financials = ?18,
-      use_of_proceeds = ?19, cornerstone_investors = ?20, shareholders = ?21,
-      risk_factors = ?22, financial_risks = ?23,
-      status = 'parsed', source_pdf_key = ?24, updated_at = ?25
+    ON CONFLICT(stock_code, lang) DO UPDATE SET
+      source_url = ?3, company_name = ?4,
+      industry = ?5, board = ?6,
+      listing_date = ?7, offer_start = ?8, offer_end = ?9, price_low = ?10, price_high = ?11,
+      currency = ?12, net_proceeds = ?13, business_summary = ?14, dividend_policy = ?15,
+      offering = ?16, timeline = ?17, sponsors = ?18, financials = ?19,
+      use_of_proceeds = ?20, cornerstone_investors = ?21, shareholders = ?22,
+      risk_factors = ?23, financial_risks = ?24,
+      status = 'parsed', updated_at = ?25
   `).bind(
     stock_code,
-    body.company_name_tc ?? null,
-    body.company_name_en ?? null,
+    lang,
+    body.source_url ?? null,
+    body.company_name ?? null,
     body.industry ?? null,
     body.board ?? null,
     body.listing_date ?? null,
@@ -110,19 +117,23 @@ adminRoutes.post("/prospectus", async (c) => {
     body.shareholders ? JSON.stringify(body.shareholders) : null,
     body.risk_factors ? JSON.stringify(body.risk_factors) : null,
     body.financial_risks ? JSON.stringify(body.financial_risks) : null,
-    body.source_pdf_key ?? null,
     now,
   ).run();
 
-  return c.json({ ok: true, stock_code });
+  return c.json({ ok: true, stock_code, lang });
 });
 
-// PATCH /admin/api/prospectus/:stock_code/status
+// PATCH /admin/api/prospectus/:stock_code/:lang/status
 // Update prospectus status
-adminRoutes.patch("/prospectus/:stock_code/status", async (c) => {
+adminRoutes.patch("/prospectus/:stock_code/:lang/status", async (c) => {
   const stockCode = c.req.param("stock_code");
+  const lang = c.req.param("lang");
   const body = await c.req.json();
   const { status } = body;
+
+  if (!["en", "tc"].includes(lang)) {
+    return c.json({ error: "lang must be 'en' or 'tc'" }, 400);
+  }
 
   const valid = ["pending", "crawled", "parsed", "failed"];
   if (!status || !valid.includes(status)) {
@@ -131,12 +142,12 @@ adminRoutes.patch("/prospectus/:stock_code/status", async (c) => {
 
   const now = new Date().toISOString();
   const result = await c.env.DB.prepare(
-    "UPDATE prospectus SET status = ?, updated_at = ? WHERE stock_code = ?"
-  ).bind(status, now, stockCode).run();
+    "UPDATE prospectus SET status = ?, updated_at = ? WHERE stock_code = ? AND lang = ?"
+  ).bind(status, now, stockCode, lang).run();
 
   if (!result.meta.changes) {
     return c.json({ error: "Prospectus not found" }, 404);
   }
 
-  return c.json({ ok: true, stock_code: stockCode, status });
+  return c.json({ ok: true, stock_code: stockCode, lang, status });
 });

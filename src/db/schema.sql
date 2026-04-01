@@ -35,12 +35,13 @@ CREATE TABLE IF NOT EXISTS filing (
   discovered_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
--- 招股书结构化数据表（独立表，不关联 company/ipo）
+-- 招股书结构化数据表（独立表，不关联 company/ipo，按语言版本一一对应 filing）
 CREATE TABLE IF NOT EXISTS prospectus (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  stock_code TEXT UNIQUE NOT NULL,                     -- 股份代号
-  company_name_tc TEXT,                                -- 公司繁体中文名称
-  company_name_en TEXT,                                -- 公司英文名称
+  stock_code TEXT NOT NULL,                            -- 股份代号
+  lang TEXT NOT NULL CHECK (lang IN ('en', 'tc')),     -- 语言：en 英文 / tc 繁体中文
+  source_url TEXT,                                     -- 招股书 PDF 下载地址
+  company_name TEXT,                                   -- 公司名称（跟随 lang：en 存英文，tc 存繁体中文）
   industry TEXT,                                       -- 行业
   board TEXT,                                          -- 上市板块
   listing_date TEXT,                                   -- 上市日期
@@ -63,9 +64,9 @@ CREATE TABLE IF NOT EXISTS prospectus (
   financial_risks TEXT,                                -- 财务风险（JSON）
   status TEXT NOT NULL DEFAULT 'pending'               -- 处理状态：待处理 / 已爬取 / 已解析 / 失败
     CHECK (status IN ('pending', 'crawled', 'parsed', 'failed')),
-  source_pdf_key TEXT,                                 -- PDF 原件存储路径
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (stock_code, lang)
 );
 
 -- 索引
@@ -75,5 +76,6 @@ CREATE INDEX IF NOT EXISTS idx_filing_ipo ON filing(ipo_id);
 CREATE INDEX IF NOT EXISTS idx_filing_source_url ON filing(source_url);
 CREATE INDEX IF NOT EXISTS idx_filing_lang ON filing(lang);
 CREATE INDEX IF NOT EXISTS idx_prospectus_stock_code ON prospectus(stock_code);
+CREATE INDEX IF NOT EXISTS idx_prospectus_lang ON prospectus(stock_code, lang);
 CREATE INDEX IF NOT EXISTS idx_prospectus_listing_date ON prospectus(listing_date);
 CREATE INDEX IF NOT EXISTS idx_prospectus_status ON prospectus(status);
