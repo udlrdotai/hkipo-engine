@@ -27,13 +27,10 @@ export interface Filing {
   category: string;
   title: string;
   source_url: string;
-  markdown_key: string | null; // R2 object key for parsed markdown
-  parsed_at: string | null;
   discovered_at: string;
 }
 
 export interface Env {
   DB: D1Database;
-  BUCKET: R2Bucket;
   ADMIN_API_KEY: string;
 }
