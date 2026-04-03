@@ -20,26 +20,7 @@ GET /
 
 ---
 
-### 2. 手动触发爬取
-
-```
-POST /api/discover
-```
-
-手动触发从港交所网站爬取最新 Main Board 上市信息。正常情况下由 cron 定时执行（周一至周五 09:00-18:00 HKT，每 30 分钟一次）。
-
-**响应示例：**
-
-```json
-{
-  "parsed": { "mainEn": 10, "mainTc": 10 },
-  "newFilings": 3
-}
-```
-
----
-
-### 3. IPO 列表
+### 2. IPO 列表
 
 ```
 GET /api/ipo/
@@ -74,7 +55,7 @@ GET /api/ipo/
 
 ---
 
-### 4. IPO 详情
+### 3. IPO 详情
 
 ```
 GET /api/ipo/:id
@@ -121,7 +102,7 @@ GET /api/ipo/:id
 
 ---
 
-### 5. 招股书文件元数据
+### 4. 招股书文件元数据
 
 ```
 GET /api/filing/:id
@@ -174,13 +155,38 @@ Authorization: Bearer <ADMIN_API_KEY>
 
 ---
 
+### 5. 手动触发爬取
+
+```
+POST /admin/api/discover
+```
+
+手动触发从港交所网站爬取最新 Main Board 上市信息。正常情况下由 cron 定时执行（周一至周五 09:00-18:00 HKT，每 30 分钟一次）。
+
+**响应示例：**
+
+```json
+{
+  "parsed": { "mainEn": 10, "mainTc": 10 },
+  "newFilings": 3
+}
+```
+
+---
+
 ### 6. 查询待处理招股书
 
 ```
 GET /admin/api/prospectus/pending
 ```
 
-返回所有 `status = 'pending'` 的招股书，附带从 filing 表关联查出的 PDF 下载地址。
+返回所有 `status = 'pending'` 的招股书记录。
+
+**查询参数：**
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| lang | string | 否 | 过滤语言：`en` / `tc` |
 
 **响应示例：**
 
@@ -188,14 +194,11 @@ GET /admin/api/prospectus/pending
 [
   {
     "stock_code": "2632",
-    "company_name_en": "Example Corp",
-    "company_name_tc": "範例公司",
+    "lang": "en",
+    "source_url": "https://www1.hkexnews.hk/.../prospectus_en.pdf",
+    "company_name": "Example Corp",
     "status": "pending",
-    "created_at": "2026-03-18T10:00:00",
-    "pdf_urls": [
-      "https://www1.hkexnews.hk/.../prospectus_en.pdf",
-      "https://www1.hkexnews.hk/.../prospectus_tc.pdf"
-    ]
+    "created_at": "2026-03-18T10:00:00"
   }
 ]
 ```
@@ -208,15 +211,16 @@ GET /admin/api/prospectus/pending
 POST /admin/api/prospectus
 ```
 
-提交 VPS 解析后的结构化招股书数据。按 `stock_code` 做 upsert，存在则更新，不存在则插入。提交成功后状态自动设为 `parsed`。
+提交 VPS 解析后的结构化招股书数据。按 `(stock_code, lang)` 做 upsert，存在则更新，不存在则插入。提交成功后状态自动设为 `parsed`。
 
 **请求体：**
 
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
 | stock_code | string | 是 | 股份代号 |
-| company_name_tc | string | 否 | 公司繁体中文名称 |
-| company_name_en | string | 否 | 公司英文名称 |
+| lang | string | 否 | 语言：`en` / `tc` |
+| source_url | string | 否 | PDF 来源 URL |
+| company_name | string | 否 | 公司名称 |
 | industry | string | 否 | 行业 |
 | board | string | 否 | 上市板块 |
 | listing_date | string | 否 | 上市日期（ISO 8601） |
@@ -237,15 +241,14 @@ POST /admin/api/prospectus
 | shareholders | object | 否 | 主要股东（存为 JSON） |
 | risk_factors | array | 否 | 风险因素（存为 JSON） |
 | financial_risks | object | 否 | 财务风险（存为 JSON） |
-| source_pdf_key | string | 否 | PDF 原件存储路径 |
 
 **请求示例：**
 
 ```json
 {
   "stock_code": "2632",
-  "company_name_tc": "江蘇新視界",
-  "company_name_en": "Jiangsu New Vision",
+  "lang": "tc",
+  "company_name": "江蘇新視界",
   "industry": "醫療器械",
   "board": "Main",
   "listing_date": "2026-04-15",
@@ -268,21 +271,21 @@ POST /admin/api/prospectus
 **响应示例：**
 
 ```json
-{ "ok": true, "stock_code": "2632" }
+{ "ok": true, "stock_code": "2632", "lang": "tc" }
 ```
 
 **错误响应：**
 
 | 状态码 | 说明 |
 |--------|------|
-| 400 | 缺少 stock_code |
+| 400 | 缺少 stock_code 或 lang 值无效 |
 
 ---
 
 ### 8. 更新招股书状态
 
 ```
-PATCH /admin/api/prospectus/:stock_code/status
+PATCH /admin/api/prospectus/:stock_code/:lang/status
 ```
 
 **路径参数：**
@@ -290,6 +293,7 @@ PATCH /admin/api/prospectus/:stock_code/status
 | 参数 | 类型 | 说明 |
 |------|------|------|
 | stock_code | string | 股份代号 |
+| lang | string | 语言：`en` / `tc` |
 
 **请求体：**
 
@@ -306,12 +310,12 @@ PATCH /admin/api/prospectus/:stock_code/status
 **响应示例：**
 
 ```json
-{ "ok": true, "stock_code": "2632", "status": "crawled" }
+{ "ok": true, "stock_code": "2632", "lang": "en", "status": "crawled" }
 ```
 
 **错误响应：**
 
 | 状态码 | 说明 |
 |--------|------|
-| 400 | status 值无效 |
-| 404 | stock_code 不存在 |
+| 400 | lang 或 status 值无效 |
+| 404 | 对应的招股书记录不存在 |
