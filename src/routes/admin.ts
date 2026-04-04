@@ -61,41 +61,47 @@ adminRoutes.post("/prospectus", async (c) => {
     return c.json({ error: "lang must be 'en' or 'tc'" }, 400);
   }
 
+  const required = ["company_name", "industry", "board", "listing_date", "offer_start", "offer_end"] as const;
+  for (const field of required) {
+    if (!body[field]) {
+      return c.json({ error: `${field} is required` }, 400);
+    }
+  }
+
   const now = new Date().toISOString();
 
   await c.env.DB.prepare(`
     INSERT INTO prospectus (
-      stock_code, lang, source_url, company_name,
+      stock_code, lang, company_name,
       industry, board,
       listing_date, offer_start, offer_end, price_low, price_high,
-      currency, net_proceeds, business_summary, dividend_policy,
+      currency, net_proceeds, business_summary,
       offering, timeline, sponsors, financials,
       use_of_proceeds, cornerstone_investors, shareholders,
       risk_factors, financial_risks,
       status, created_at, updated_at
     ) VALUES (
-      ?1, ?2, ?3, ?4,
-      ?5, ?6,
-      ?7, ?8, ?9, ?10, ?11,
-      ?12, ?13, ?14, ?15,
-      ?16, ?17, ?18, ?19,
-      ?20, ?21, ?22,
-      ?23, ?24,
-      'parsed', ?25, ?25
+      ?1, ?2, ?3,
+      ?4, ?5,
+      ?6, ?7, ?8, ?9, ?10,
+      ?11, ?12, ?13,
+      ?14, ?15, ?16, ?17,
+      ?18, ?19, ?20,
+      ?21, ?22,
+      'parsed', ?23, ?23
     )
     ON CONFLICT(stock_code, lang) DO UPDATE SET
-      source_url = ?3, company_name = ?4,
-      industry = ?5, board = ?6,
-      listing_date = ?7, offer_start = ?8, offer_end = ?9, price_low = ?10, price_high = ?11,
-      currency = ?12, net_proceeds = ?13, business_summary = ?14, dividend_policy = ?15,
-      offering = ?16, timeline = ?17, sponsors = ?18, financials = ?19,
-      use_of_proceeds = ?20, cornerstone_investors = ?21, shareholders = ?22,
-      risk_factors = ?23, financial_risks = ?24,
-      status = 'parsed', updated_at = ?25
+      company_name = ?3,
+      industry = ?4, board = ?5,
+      listing_date = ?6, offer_start = ?7, offer_end = ?8, price_low = ?9, price_high = ?10,
+      currency = ?11, net_proceeds = ?12, business_summary = ?13,
+      offering = ?14, timeline = ?15, sponsors = ?16, financials = ?17,
+      use_of_proceeds = ?18, cornerstone_investors = ?19, shareholders = ?20,
+      risk_factors = ?21, financial_risks = ?22,
+      status = 'parsed', updated_at = ?23
   `).bind(
     stock_code,
     lang,
-    body.source_url ?? null,
     body.company_name ?? null,
     body.industry ?? null,
     body.board ?? null,
@@ -107,7 +113,6 @@ adminRoutes.post("/prospectus", async (c) => {
     body.currency ?? null,
     body.net_proceeds ?? null,
     body.business_summary ?? null,
-    body.dividend_policy ?? null,
     body.offering ? JSON.stringify(body.offering) : null,
     body.timeline ? JSON.stringify(body.timeline) : null,
     body.sponsors ? JSON.stringify(body.sponsors) : null,

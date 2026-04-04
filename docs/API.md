@@ -218,20 +218,18 @@ POST /admin/api/prospectus
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
 | stock_code | string | 是 | 股份代号 |
-| lang | string | 否 | 语言：`en` / `tc` |
-| source_url | string | 否 | PDF 来源 URL |
-| company_name | string | 否 | 公司名称 |
-| industry | string | 否 | 行业 |
-| board | string | 否 | 上市板块 |
-| listing_date | string | 否 | 上市日期（ISO 8601） |
-| offer_start | string | 否 | 公开发售开始日 |
-| offer_end | string | 否 | 公开发售截止日 |
+| lang | string | 是 | 语言：`en` / `tc` |
+| company_name | string | 是 | 公司名称 |
+| industry | string | 是 | 行业 |
+| board | string | 是 | 上市板块 |
+| listing_date | string | 是 | 上市日期（ISO 8601） |
+| offer_start | string | 是 | 公开发售开始日 |
+| offer_end | string | 是 | 公开发售截止日 |
 | price_low | number | 否 | 发售价下限 |
 | price_high | number | 否 | 发售价上限 |
 | currency | string | 否 | 货币（如 HKD） |
 | net_proceeds | number | 否 | 估计所得款项净额 |
 | business_summary | string | 否 | 主营业务描述 |
-| dividend_policy | string | 否 | 股息政策 |
 | offering | object | 否 | 发售详情（存为 JSON） |
 | timeline | object | 否 | 预期时间表（存为 JSON） |
 | sponsors | object | 否 | 保荐人及中介机构（存为 JSON） |
