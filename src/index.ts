@@ -8,7 +8,7 @@ import { discover } from "./services/discovery";
 
 const app = new Hono<{ Bindings: Env }>();
 
-// Health check
+// Health check (both domains)
 app.get("/healthz", (c) => c.json({ name: "hkipo-engine", status: "ok" }));
 
 // API routes

@@ -2,12 +2,24 @@ name = "hkipo-engine"
 main = "src/index.ts"
 compatibility_date = "2024-12-01"
 
-# D1 Database
+# D1 Database (dev/default)
 [[d1_databases]]
 binding = "DB"
 database_name = "hkipo-db"
 database_id = "33609e5d-f59e-457a-8417-4cea90eacbb8"
 
-# Cron Triggers - check HKEXnews for new prospectuses
-[triggers]
+# No cron in dev — production only
+
+# ─── Production environment ───
+[env.production]
+routes = [
+  { pattern = "hkiporadar.com/*", zone_name = "hkiporadar.com" }
+]
+
+[[env.production.d1_databases]]
+binding = "DB"
+database_name = "hkipo-db-prod"
+database_id = "4b1cbb01-1618-4113-9922-3c8b80746aaa"
+
+[env.production.triggers]
 crons = ["*/30 1-10 * * 1-5"]  # Every 30 min, Mon-Fri 9am-6pm HKT (UTC+8)
