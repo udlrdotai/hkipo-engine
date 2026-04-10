@@ -12,6 +12,7 @@ hkipo-engine is a Cloudflare Workers service that tracks Hong Kong Main Board IP
 - **Object Storage**: Cloudflare R2
 - **Language**: TypeScript (ESNext, strict mode)
 - **Deploy**: `wrangler deploy` (always deploy remotely, never use `wrangler dev`)
+- **Environments**: dev (default) and production (`-e production`). Always explicitly specify the target environment.
 
 ## Project Structure
 
@@ -58,13 +59,37 @@ Admin (requires `Authorization: Bearer <ADMIN_API_KEY>`):
 - **VPS handles PDF parsing** — VPS polls pending prospectuses, downloads PDFs, extracts data with Python (pypdf), submits results back via admin API
 - **No DOM parser** — discovery.ts uses regex for HTML parsing (Workers has no DOMParser)
 
+## Environments
+
+| | Dev (default) | Production (`-e production`) |
+|---|---|---|
+| Worker name | `hkipo-engine` | `hkipo-engine-production` |
+| D1 database | `hkipo-db` | `hkipo-db-prod` |
+| Domain | — | `hkiporadar.com` |
+| Cron | — | `*/30 1-10 * * 1-5` |
+| Secrets source | `.dev.vars` | `wrangler secret -e production` |
+
+**⚠ All wrangler commands MUST explicitly specify the target environment. Never omit `-e production` when targeting production.**
+
 ## Commands
 
+Common:
 ```bash
-npx wrangler deploy                    # deploy to Cloudflare
 npx tsc --noEmit                       # type check
-wrangler d1 execute hkipo-db --remote --command "..."  # run SQL on remote D1
-wrangler secret put ADMIN_API_KEY      # set secret
+```
+
+Dev:
+```bash
+npx wrangler deploy                    # deploy dev worker
+npx wrangler d1 execute hkipo-db --remote --command "..."   # run SQL on dev D1
+npx wrangler secret put <KEY>          # set dev secret
+```
+
+Production:
+```bash
+npx wrangler deploy -e production      # deploy production worker
+npx wrangler d1 execute hkipo-db-prod --remote -e production --command "..."  # run SQL on production D1
+npx wrangler secret put <KEY> -e production   # set production secret
 ```
 
 ## Cron
@@ -73,7 +98,9 @@ wrangler secret put ADMIN_API_KEY      # set secret
 
 ## Secrets
 
-- `ADMIN_API_KEY` — Bearer token for /admin/api/* routes. Stored in `.dev.vars` locally, `wrangler secret` for production.
+- `ADMIN_API_KEY` — Bearer token for /admin/api/* routes
+  - Dev: stored in `.dev.vars`
+  - Production: `npx wrangler secret put ADMIN_API_KEY -e production`
 
 ## Conventions
 
