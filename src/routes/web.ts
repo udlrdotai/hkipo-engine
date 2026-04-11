@@ -377,11 +377,24 @@ interface ProspectusRow {
   currency: string | null;
   net_proceeds: number | null;
   business_summary: string | null;
+  offering: string | null;
   sponsors: string | null;
   financials: string | null;
   use_of_proceeds: string | null;
   cornerstone_investors: string | null;
   risk_factors: string | null;
+}
+
+interface MarketCapRange {
+  low: number | null;
+  high: number | null;
+  currency?: string | null;
+  unit?: string | null;
+}
+
+interface OfferingJSON {
+  market_cap_range?: MarketCapRange;
+  [k: string]: unknown;
 }
 
 interface IncomeRow {
@@ -416,9 +429,10 @@ interface CornerstoneItem {
   unit?: string;
 }
 
+type SponsorEntry = string | { name?: string };
 interface SponsorsJSON {
-  sponsors?: Array<{ name?: string }>;
-  joint_sponsors?: Array<{ name?: string }>;
+  sponsors?: SponsorEntry[];
+  joint_sponsors?: SponsorEntry[];
   [k: string]: unknown;
 }
 
@@ -502,11 +516,25 @@ function renderRisks(items: unknown): string {
     .join("")}</ul>`;
 }
 
+function fmtMarketCap(mc: MarketCapRange | undefined | null): string {
+  if (!mc || (mc.low == null && mc.high == null)) return "—";
+  const cur = mc.currency === "HKD" || !mc.currency ? "HK$" : mc.currency;
+  // Parser stores values in "百萬" (millions). Render as HK$N,NNNM to match Net proceeds.
+  const fmt = (n: number) => `${cur}${Math.round(n).toLocaleString("en-US")}M`;
+  if (mc.low != null && mc.high != null && mc.low !== mc.high) {
+    return `${fmt(mc.low)}–${fmt(mc.high)}`;
+  }
+  const v = mc.high ?? mc.low!;
+  return fmt(v);
+}
+
 function renderSponsors(sp: SponsorsJSON | null): string {
   if (!sp) return "—";
-  const list = [...(sp.sponsors || []), ...(sp.joint_sponsors || [])];
-  if (list.length === 0) return "—";
-  return list.map((s) => esc(s.name || "")).filter(Boolean).join(" · ");
+  const raw = [...(sp.sponsors || []), ...(sp.joint_sponsors || [])];
+  const names = raw
+    .map((s) => (typeof s === "string" ? s : s?.name || ""))
+    .filter(Boolean);
+  return names.length ? names.map(esc).join(" · ") : "—";
 }
 
 webRoutes.get("/co/:token", async (c) => {
@@ -556,6 +584,7 @@ webRoutes.get("/co/:token", async (c) => {
   const corn = safeJSON<CornerstoneItem[]>(row.cornerstone_investors);
   const risks = safeJSON<unknown>(row.risk_factors);
   const sponsors = safeJSON<SponsorsJSON>(row.sponsors);
+  const offering = safeJSON<OfferingJSON>(row.offering);
 
   const name = row.company_name || row.stock_code;
   const parts = name.split(" ");
@@ -597,7 +626,8 @@ webRoutes.get("/co/:token", async (c) => {
         <div class="row"><span class="k">Board</span><span class="v">${esc(row.board || "Main")}</span></div>
         <div class="row"><span class="k">Status</span><span class="v">${status}</span></div>
         <div class="row"><span class="k">Price band</span><span class="v mono">${esc(fmtPriceBand(row.price_low, row.price_high, row.currency))}</span></div>
-        <div class="row"><span class="k">Net proceeds</span><span class="v mono">${row.net_proceeds != null ? esc((row.currency || "HK$") + row.net_proceeds.toLocaleString("en-US")) : "—"}</span></div>
+        <div class="row"><span class="k">Market cap</span><span class="v mono">${esc(fmtMarketCap(offering?.market_cap_range))}</span></div>
+        <div class="row"><span class="k">Net proceeds</span><span class="v mono">${row.net_proceeds != null ? esc(`${row.currency === "HKD" || !row.currency ? "HK$" : row.currency}${row.net_proceeds.toLocaleString("en-US")}M`) : "—"}</span></div>
         <div class="row"><span class="k">Offer period</span><span class="v mono">${esc(fmtDate(row.offer_start))} → ${esc(fmtDate(row.offer_end))}</span></div>
         <div class="row"><span class="k">Listing date</span><span class="v mono">${esc(fmtDate(row.listing_date))}</span></div>
         <div class="row"><span class="k">Sponsor(s)</span><span class="v">${renderSponsors(sponsors)}</span></div>

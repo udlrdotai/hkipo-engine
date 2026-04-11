@@ -12,7 +12,7 @@ hkipo-engine is a Cloudflare Workers service that tracks Hong Kong Main Board IP
 - **Object Storage**: Cloudflare R2
 - **Language**: TypeScript (ESNext, strict mode)
 - **Deploy**: `wrangler deploy` (always deploy remotely, never use `wrangler dev`)
-- **Environments**: dev (default) and production (`-e production`). Always explicitly specify the target environment.
+- **Environments**: `dev` (`--env dev`) and `prod` (`--env prod`). There is no default environment — every wrangler command MUST pass `--env`.
 
 ## Project Structure
 
@@ -61,15 +61,15 @@ Admin (requires `Authorization: Bearer <ADMIN_API_KEY>`):
 
 ## Environments
 
-| | Dev (default) | Production (`-e production`) |
+| | Dev (`--env dev`) | Prod (`--env prod`) |
 |---|---|---|
 | Worker name | `hkipo-engine` | `hkipo-engine-production` |
 | D1 database | `hkipo-db` | `hkipo-db-prod` |
 | Domain | — | `hkiporadar.com` |
 | Cron | — | `*/30 1-10 * * 1-5` |
-| Secrets source | `.dev.vars` | `wrangler secret -e production` |
+| Secrets source | `.dev.vars` | `wrangler secret put --env prod` |
 
-**⚠ All wrangler commands MUST explicitly specify the target environment. Never omit `-e production` when targeting production.**
+**⚠ There is no default environment. Every `wrangler` command MUST pass `--env dev` or `--env prod`. Omitting `--env` will fail or hit the wrong target.**
 
 ## Commands
 
@@ -80,16 +80,16 @@ npx tsc --noEmit                       # type check
 
 Dev:
 ```bash
-npx wrangler deploy                    # deploy dev worker
-npx wrangler d1 execute hkipo-db --remote --command "..."   # run SQL on dev D1
-npx wrangler secret put <KEY>          # set dev secret
+npx wrangler deploy --env dev                                                  # deploy dev worker
+npx wrangler d1 execute hkipo-db --remote --env dev --command "..."            # run SQL on dev D1
+npx wrangler secret put <KEY> --env dev                                        # set dev secret
 ```
 
-Production:
+Prod:
 ```bash
-npx wrangler deploy -e production      # deploy production worker
-npx wrangler d1 execute hkipo-db-prod --remote -e production --command "..."  # run SQL on production D1
-npx wrangler secret put <KEY> -e production   # set production secret
+npx wrangler deploy --env prod                                                 # deploy prod worker
+npx wrangler d1 execute hkipo-db-prod --remote --env prod --command "..."      # run SQL on prod D1
+npx wrangler secret put <KEY> --env prod                                       # set prod secret
 ```
 
 ## Cron
@@ -99,8 +99,8 @@ npx wrangler secret put <KEY> -e production   # set production secret
 ## Secrets
 
 - `ADMIN_API_KEY` — Bearer token for /admin/api/* routes
-  - Dev: stored in `.dev.vars`
-  - Production: `npx wrangler secret put ADMIN_API_KEY -e production`
+  - Dev: stored in `.dev.vars` (or `npx wrangler secret put ADMIN_API_KEY --env dev`)
+  - Prod: `npx wrangler secret put ADMIN_API_KEY --env prod`
 
 ## Conventions
 
