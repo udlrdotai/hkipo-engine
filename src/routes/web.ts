@@ -148,7 +148,10 @@ const FONTS = `
 <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter+Tight:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 `;
 
-function shell(title: string, body: string, extraCSS = ""): string {
+type NavKey = "filings" | "calendar" | "";
+
+function shell(title: string, body: string, extraCSS = "", active: NavKey = "filings"): string {
+  const navCls = (key: NavKey) => (active === key ? ' class="active"' : "");
   return `<!doctype html>
 <html lang="zh-Hant"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -161,8 +164,8 @@ ${FONTS}
 <header class="site">
   <a href="/" class="brand">HKIPO<em>Radar</em></a>
   <nav>
-    <a href="/" class="active">Filings</a>
-    <a href="#">Calendar</a>
+    <a href="/"${navCls("filings")}>Filings</a>
+    <a href="/calendar"${navCls("calendar")}>Calendar</a>
     <a href="#">Sponsors</a>
     <a href="#">API</a>
   </nav>
@@ -612,4 +615,235 @@ webRoutes.get("/co/:token", async (c) => {
 </section>
 `;
   return c.html(shell(`${name} — HKIPORadar`, body, DETAIL_CSS));
+});
+
+// ─────────────────────────── calendar page ───────────────────────────
+
+const CAL_CSS = `
+  .cal-head{padding:60px 0 28px}
+  .cal-head .eyebrow{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--mute);margin-bottom:18px}
+  .cal-head .eyebrow .dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--accent);margin-right:8px;vertical-align:middle}
+  .cal-head h1{font-family:"Instrument Serif",serif;font-weight:400;font-size:clamp(40px,5.5vw,68px);line-height:1.05;letter-spacing:-.025em;margin:0 0 16px;max-width:18ch}
+  .cal-head h1 em{font-style:italic;color:var(--accent)}
+  .cal-head p{font-size:16px;color:var(--ink-2);max-width:60ch;margin:0}
+  .cal-bar{display:flex;align-items:center;justify-content:space-between;gap:20px;padding:24px 0 18px;border-bottom:1px solid var(--line)}
+  .cal-nav{display:flex;align-items:center;gap:12px}
+  .cal-nav .arrow{width:34px;height:34px;display:inline-flex;align-items:center;justify-content:center;border:1px solid var(--line-2);border-radius:999px;color:var(--ink-2);background:transparent;cursor:pointer;font:inherit;text-decoration:none;transition:all .15s ease}
+  .cal-nav .arrow:hover{border-color:var(--ink);color:var(--ink)}
+  .cal-nav .arrow[aria-disabled="true"]{opacity:.3;pointer-events:none}
+  .cal-nav .month-pick{position:relative;display:inline-flex;align-items:center}
+  .cal-nav .month-pick label{font-family:"Instrument Serif",serif;font-size:28px;letter-spacing:-.01em;color:var(--ink);cursor:pointer;padding:0 4px}
+  .cal-nav .month-pick label:hover{color:var(--accent)}
+  .cal-nav .month-pick input{position:absolute;inset:0;opacity:0;cursor:pointer;font:inherit;border:0;padding:0;color-scheme:light}
+  .cal-nav .today-btn{font:inherit;font-size:12px;color:var(--mute);background:none;border:0;cursor:pointer;padding:6px 10px;letter-spacing:.04em;text-transform:uppercase;text-decoration:none}
+  .cal-nav .today-btn:hover{color:var(--accent)}
+  .cal-legend{display:flex;gap:18px;font-size:12px;color:var(--mute)}
+  .cal-legend .lg{display:inline-flex;align-items:center;gap:6px}
+  .cal-legend .lg::before{content:"";width:8px;height:8px;border-radius:2px;background:currentColor}
+  .lg.start{color:var(--accent)}
+  .lg.end{color:#a16207}
+  .lg.list{color:var(--good)}
+  .cal-grid{display:grid;grid-template-columns:repeat(7,1fr);border-left:1px solid var(--line);border-top:1px solid var(--line);margin-top:22px}
+  .cal-dow{padding:10px 12px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--mute);border-right:1px solid var(--line);border-bottom:1px solid var(--line);background:var(--bg-2)}
+  .cal-cell{min-height:120px;padding:10px 10px 12px;border-right:1px solid var(--line);border-bottom:1px solid var(--line);background:var(--bg);display:flex;flex-direction:column;gap:5px;overflow:hidden}
+  .cal-cell.empty{background:var(--bg-2)}
+  .cal-cell .num{font-family:"JetBrains Mono",monospace;font-size:13px;color:var(--ink-2);font-variant-numeric:tabular-nums;margin-bottom:2px}
+  .cal-cell.weekend .num{color:var(--mute)}
+  .cal-cell.today{background:rgba(194,65,12,.04)}
+  .cal-cell.today .num{color:var(--accent);font-weight:600}
+  .cal-cell .ev{font-size:11px;line-height:1.3;padding:4px 7px;border-radius:4px;display:flex;flex-direction:column;gap:1px;border-left:2px solid currentColor;background:var(--bg-2);transition:background .12s ease;overflow:hidden}
+  .cal-cell .ev:hover{background:var(--line)}
+  .cal-cell .ev.start{border-left-color:var(--accent)}
+  .cal-cell .ev.end{border-left-color:#a16207}
+  .cal-cell .ev.list{border-left-color:var(--good)}
+  .cal-cell .ev .tag{font-family:"JetBrains Mono",monospace;font-size:9px;letter-spacing:.06em;text-transform:uppercase}
+  .cal-cell .ev.start .tag{color:var(--accent)}
+  .cal-cell .ev.end .tag{color:#a16207}
+  .cal-cell .ev.list .tag{color:var(--good)}
+  .cal-cell .ev .co{color:var(--ink);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .cal-empty-note{padding:50px 0;text-align:center;color:var(--mute);font-size:13px;font-style:italic}
+  @media(max-width:820px){
+    .wrap{padding:0 20px}
+    .cal-bar{flex-direction:column;align-items:stretch;gap:14px}
+    .cal-nav{justify-content:space-between}
+    .cal-cell{min-height:78px;padding:6px 5px}
+    .cal-dow{padding:6px;font-size:10px}
+    .cal-cell .ev{padding:3px 5px;font-size:10px}
+    .cal-cell .ev .tag{font-size:8px}
+    .cal-cell .ev .co{font-size:10px}
+  }
+`;
+
+const MONTH_NAMES = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
+const DOW_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+interface CalRow {
+  stock_code: string;
+  company_name: string | null;
+  offer_start: string | null;
+  offer_end: string | null;
+  listing_date: string | null;
+}
+
+type CalEventType = "start" | "end" | "list";
+interface CalEvent {
+  type: CalEventType;
+  stock_code: string;
+  company_name: string;
+  token: string;
+}
+
+webRoutes.get("/calendar", async (c) => {
+  // "Today" in HKT (UTC+8) so the highlighted day matches user expectations.
+  const hktNow = new Date(Date.now() + 8 * 3600 * 1000);
+  const todayY = hktNow.getUTCFullYear();
+  const todayM = hktNow.getUTCMonth() + 1;
+  const todayD = hktNow.getUTCDate();
+
+  // Parse ?m=YYYY-MM, default to current HKT month.
+  const mParam = c.req.query("m") || "";
+  let year = todayY;
+  let month = todayM;
+  const mm = /^(\d{4})-(\d{1,2})$/.exec(mParam);
+  if (mm) {
+    const y = parseInt(mm[1], 10);
+    const m = parseInt(mm[2], 10);
+    if (y >= 1990 && y <= 9999 && m >= 1 && m <= 12) {
+      // Clamp to "no future" — past months only per requirement.
+      if (y < todayY || (y === todayY && m <= todayM)) {
+        year = y;
+        month = m;
+      }
+    }
+  }
+
+  const monthStr = `${year}-${String(month).padStart(2, "0")}`;
+  const todayMonthStr = `${todayY}-${String(todayM).padStart(2, "0")}`;
+  const isCurrentMonth = year === todayY && month === todayM;
+
+  // Pull every prospectus where any of the three dates falls in the target month.
+  const rows = await c.env.DB.prepare(
+    `SELECT stock_code, company_name, offer_start, offer_end, listing_date
+     FROM prospectus
+     WHERE status = 'parsed' AND lang = 'tc'
+       AND (
+         substr(offer_start, 1, 7)  = ?
+         OR substr(offer_end, 1, 7)   = ?
+         OR substr(listing_date, 1, 7) = ?
+       )`,
+  )
+    .bind(monthStr, monthStr, monthStr)
+    .all<CalRow>();
+
+  const list = rows.results || [];
+  const secret = getSecret(c.env);
+  const tokenMap = new Map<string, string>();
+  await Promise.all(
+    list.map(async (r) => {
+      tokenMap.set(r.stock_code, await makeToken(r.stock_code, secret));
+    }),
+  );
+
+  // Bucket events by day-of-month.
+  const byDay = new Map<number, CalEvent[]>();
+  const pushEvent = (dateStr: string | null, type: CalEventType, r: CalRow) => {
+    if (!dateStr || !dateStr.startsWith(monthStr + "-")) return;
+    const day = parseInt(dateStr.slice(8, 10), 10);
+    if (!day || day < 1 || day > 31) return;
+    const arr = byDay.get(day) || [];
+    arr.push({
+      type,
+      stock_code: r.stock_code,
+      company_name: r.company_name || r.stock_code,
+      token: tokenMap.get(r.stock_code) || "",
+    });
+    byDay.set(day, arr);
+  };
+  for (const r of list) {
+    pushEvent(r.offer_start, "start", r);
+    pushEvent(r.offer_end, "end", r);
+    pushEvent(r.listing_date, "list", r);
+  }
+
+  // Build the grid.
+  const firstWeekday = new Date(Date.UTC(year, month - 1, 1)).getUTCDay(); // 0=Sun
+  const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const totalCells = Math.ceil((firstWeekday + daysInMonth) / 7) * 7;
+
+  const order: Record<CalEventType, number> = { start: 0, end: 1, list: 2 };
+  const tagLabel: Record<CalEventType, string> = { start: "Offer", end: "Close", list: "List" };
+
+  const cells: string[] = [];
+  for (let i = 0; i < totalCells; i++) {
+    const dayNum = i - firstWeekday + 1;
+    if (dayNum < 1 || dayNum > daysInMonth) {
+      cells.push(`<div class="cal-cell empty"></div>`);
+      continue;
+    }
+    const dowIdx = i % 7;
+    const isWeekend = dowIdx === 0 || dowIdx === 6;
+    const isToday = isCurrentMonth && dayNum === todayD;
+    const events = (byDay.get(dayNum) || []).slice().sort((a, b) => order[a.type] - order[b.type]);
+
+    const evHtml = events
+      .map((e) => {
+        const tag = tagLabel[e.type];
+        const title = `${e.company_name} · ${tag} · ${monthStr}-${String(dayNum).padStart(2, "0")}`;
+        return `<a class="ev ${e.type}" href="/co/${esc(e.token)}" title="${esc(title)}"><span class="tag">${tag}</span><span class="co">${esc(e.company_name)}</span></a>`;
+      })
+      .join("");
+
+    const classes = ["cal-cell"];
+    if (isWeekend) classes.push("weekend");
+    if (isToday) classes.push("today");
+    cells.push(`<div class="${classes.join(" ")}"><div class="num">${dayNum}</div>${evHtml}</div>`);
+  }
+
+  // Prev / next month navigation. "Next" disabled when at current month (past-only filter).
+  const prevY = month === 1 ? year - 1 : year;
+  const prevM = month === 1 ? 12 : month - 1;
+  const prevStr = `${prevY}-${String(prevM).padStart(2, "0")}`;
+  const nextY = month === 12 ? year + 1 : year;
+  const nextM = month === 12 ? 1 : month + 1;
+  const nextStr = `${nextY}-${String(nextM).padStart(2, "0")}`;
+  const nextDisabled = isCurrentMonth;
+
+  const dowHtml = DOW_LABELS.map((d) => `<div class="cal-dow">${d}</div>`).join("");
+  const monthLabel = `${MONTH_NAMES[month - 1]} ${year}`;
+  const totalEvents = list.length;
+
+  const body = `
+<section>
+  <div class="cal-head">
+    <div class="eyebrow"><span class="dot"></span>HONG KONG MAIN BOARD</div>
+    <h1>IPO <em>calendar.</em></h1>
+    <p>Offer windows and listing dates across Hong Kong Main Board prospectuses. Pick any past month to see what was in the pipeline. Click an event to open the filing.</p>
+  </div>
+  <div class="cal-bar">
+    <div class="cal-nav">
+      <a class="arrow" href="/calendar?m=${prevStr}" aria-label="Previous month">←</a>
+      <div class="month-pick">
+        <label for="month-input">${esc(monthLabel)}</label>
+        <input id="month-input" type="month" value="${monthStr}" max="${todayMonthStr}" onchange="if(this.value)location.href='/calendar?m='+this.value">
+      </div>
+      <a class="arrow" href="/calendar?m=${nextStr}" aria-label="Next month" aria-disabled="${nextDisabled ? "true" : "false"}">→</a>
+      ${isCurrentMonth ? "" : `<a class="today-btn" href="/calendar">Today</a>`}
+    </div>
+    <div class="cal-legend">
+      <span class="lg start">Offer start</span>
+      <span class="lg end">Offer end</span>
+      <span class="lg list">Listing</span>
+    </div>
+  </div>
+  <div class="cal-grid">
+    ${dowHtml}
+    ${cells.join("")}
+  </div>
+  ${totalEvents === 0 ? `<div class="cal-empty-note">No offer or listing events recorded for ${esc(monthLabel)}.</div>` : ""}
+</section>
+`;
+  return c.html(shell(`Calendar — HKIPORadar`, body, CAL_CSS, "calendar"));
 });
