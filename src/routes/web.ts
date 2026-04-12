@@ -432,6 +432,17 @@ interface CornerstoneItem {
   unit?: string;
 }
 
+interface MarketCapRange {
+  low: number | null;
+  high: number | null;
+  currency?: string | null;
+  unit?: string | null;
+}
+
+interface OfferingJSON {
+  market_cap_range?: MarketCapRange;
+  [k: string]: unknown;
+}
 type SponsorEntry = string | { name?: string };
 interface SponsorsJSON {
   sponsors?: SponsorEntry[];
