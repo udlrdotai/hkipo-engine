@@ -94,8 +94,9 @@ function safeJSON<T = unknown>(s: unknown): T | null {
 
 function fmtPriceBand(low: number | null, high: number | null, currency: string | null): string {
   if (low == null || high == null) return "—";
-  const cur = currency || "HK$";
-  return `${cur === "HKD" ? "HK$" : cur}${low.toFixed(2)}–${high.toFixed(2)}`;
+  const cur = currency === "HKD" || !currency ? "HK$" : currency;
+  if (low === high) return `${cur}${low.toFixed(2)}`;
+  return `${cur}${low.toFixed(2)}–${high.toFixed(2)}`;
 }
 
 function deriveStatus(listingDate: string | null): "offering" | "listed" | "—" {
@@ -661,12 +662,12 @@ webRoutes.get("/co/:token", async (c) => {
 // ─────────────────────────── calendar page ───────────────────────────
 
 const CAL_CSS = `
-  .cal-head{padding:60px 0 28px}
+  .cal-head{padding:72px 0 44px}
   .cal-head .eyebrow{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--mute);margin-bottom:18px}
   .cal-head .eyebrow .dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--accent);margin-right:8px;vertical-align:middle}
-  .cal-head h1{font-family:"Instrument Serif",serif;font-weight:400;font-size:clamp(40px,5.5vw,68px);line-height:1.05;letter-spacing:-.025em;margin:0 0 16px;max-width:18ch}
+  .cal-head h1{font-family:"Instrument Serif",serif;font-weight:400;font-size:clamp(44px,6vw,76px);line-height:1.05;letter-spacing:-.025em;margin:0 0 20px;max-width:18ch}
   .cal-head h1 em{font-style:italic;color:var(--accent)}
-  .cal-head p{font-size:16px;color:var(--ink-2);max-width:60ch;margin:0}
+  .cal-head p{font-size:17px;color:var(--ink-2);max-width:56ch;margin:0}
   .cal-bar{display:flex;align-items:center;justify-content:space-between;gap:20px;padding:24px 0 18px;border-bottom:1px solid var(--line)}
   .cal-nav{display:flex;align-items:center;gap:12px}
   .cal-nav .arrow{width:34px;height:34px;display:inline-flex;align-items:center;justify-content:center;border:1px solid var(--line-2);border-radius:999px;color:var(--ink-2);background:transparent;cursor:pointer;font:inherit;text-decoration:none;transition:all .15s ease}
